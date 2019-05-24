@@ -18,6 +18,7 @@
 #===============================================================================
 set -o nounset                              # Treat unset variables as an error
 GDISK_BIN="gdisk"
+
 # temp disk for testing gdisk
 #$(mktemp) 
 TEMP_DISK="/dev/mmcblk0" #"/tmp/aaa" 
@@ -28,8 +29,13 @@ OPT_NEW="n"
 OPT_CHANGE_NAME="c"                   
 OPT_CHANGE_TYPE="t"                                                                                
 OPT_DELETE="d"
-
+PART_LOCK="/mnt/flash/part_uncomplete_lock"
 TEST_PART_TYPE="8300"
+CUSTOM1_NAME="1111"
+CUSTOM2_NAME="2222"
+CUSTOM_PARTS="$CUSTOM1_NAME $CUSTOM2_NAME"
+CUSTOM_MOUNTPOINT0="/aaa"
+CUSTOM_MOUNTPOINT1="/bbb"
 # Pretty print string (Red if FAILED or green if SUCCESS)
 # $1: string to pretty print
 pretty_print() {                                                                                   
@@ -177,7 +183,7 @@ EOF
 # $1 partition idx
 # $2 partition name
 delete_partition() {     
-    if [ $1 -eq 0 ] ; then
+    if [ $1 -eq 0 ] || [ "$1" == "" ] ; then
         echo "del part failed, partition idx err!"
         exit 1
     fi
@@ -228,7 +234,7 @@ if false ; then
         exit 1       
     fi       
 fi
-do_auto_partition() {
+do_auto_partition_sys() {
     verify_part "FFEE" "partmagic" "last part" "auto"
     if [ $? -eq 0 ] ; then
         echo "partition is ok!"
@@ -290,22 +296,33 @@ do_auto_partition() {
             fi
         done
     fi
-    for pp in custom1 custom2
+    #
+    echo "Automatic partitioning has been completed" 
+}
+
+do_auto_partition_user() {
+    get_partition_idx "$CUSTOM1_NAME"
+    idx=$?
+    if [ "$idx" != "" ] && [ $idx -ne 0 ] ; then
+        echo "partition is ok!"
+        return
+    fi
+    for pp in ${CUSTOM_PARTS} 
     do
         size="0M"
         pname="Linux filesystem"
         ptype="8300"
         off_size="0M"
         case $pp in
-            custom1)
+            $CUSTOM1_NAME)
                 off_size="0M"
                 size="1G"
                 pname="Linux filesystem"
                 ptype="8300"
                 ;;
-            custom2)
+            $CUSTOM2_NAME)
                 off_size="0M"
-                size="300M"
+                size="600M"
                 pname="Linux filesystem"
                 ptype="8300"
                 ;;
@@ -319,13 +336,77 @@ do_auto_partition() {
         create_partition "$ptype" "$size" "$pname" "$off_size"
         change_partition_name  $pp $ptype
     done
-
-
-    #
-    echo "Automatic partitioning has been completed" 
+    if [ -f $PART_LOCK ] ; then
+        pretty_print "ERROR" "Stat err : This is a BUG!!!"
+        exit 4
+    fi
+    mkdir -p `dirname $PART_LOCK`
+    touch $PART_LOCK
+    sync
+    reboot
+    echo "Automatic partitioning has been completed, begin to reboot"
+    exit 0
 }
-do_del_partition() {
-    verify_part "FFEE" "partmagic" "last part" "auto"
+do_auto_partition() {
+    change_partition_limit
+    #do_auto_partition_sys
+    do_auto_partition_user
+}
+do_format(){
+    if [ -f $PART_LOCK ] ; then
+        for p in ${CUSTOM_PARTS}
+        do
+            get_partition_idx "$p"
+            idx=$?
+            if [ "$idx" != "" ] && [ $idx -ne 0 ]  ; then
+                echo y | mkfs.ext4  ${TEMP_DISK}p$idx 
+                if [ $? -ne 0 ] ; then
+                    pretty_print "FAILED" "mkfs.ext4 idx:$idx name:$p"
+                    exit 2;
+                fi
+            fi
+        done
+        rm -f $PART_LOCK
+    fi
+}
+do_auto_mount(){
+    for p in ${CUSTOM_PARTS}
+    do
+        get_partition_idx "$p"
+        idx=$?
+        if [ "$idx" != "" ] && [ $idx -ne 0 ] ; then
+            case $p in  
+                $CUSTOM1_NAME)
+                    mkdir -p $CUSTOM_MOUNTPOINT0
+                    mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT0 || ( echo y | mkfs.ext4 ${TEMP_DISK}p$idx && mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT0 ) 
+                    if [ $? -ne 0 ] ; then
+                        pretty_print "FAILED" "mount idx:$idx name:$p"
+                    fi
+                    ;;
+                $CUSTOM2_NAME)
+                    mkdir -p $CUSTOM_MOUNTPOINT1
+                    mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT1 || ( echo y | mkfs.ext4 ${TEMP_DISK}p$idx && mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT1 ) 
+                    if [ $? -ne 0 ] ; then
+                        pretty_print "FAILED" "mount idx:$idx name:$p"
+                    fi
+                    ;;
+                *)  echo "undefine part"
+                    exit 3
+                    ;;
+            esac
+        fi
+    done
+}
+do_del_partition_user() {
+    for p in $CUSTOM_PARTS
+    do
+        get_partition_idx "$p"
+        idx=$?
+        delete_partition $idx $p
+    done
+}
+do_del_partition_sys() {
+   verify_part "FFEE" "partmagic" "last part" "auto"
     if [ $? -eq 0 ] ; then
         echo "partition is ok! now we del it"
     else
@@ -333,14 +414,7 @@ do_del_partition() {
         exit 1
     fi
 
-    for p in custom1 custom2
-    do
-        get_partition_idx "$p"
-        idx=$?
-        delete_partition $idx $p
-    done
-
-    for p in APPSBL_back boot_back userdata_back system_back end
+   for p in APPSBL_back boot_back userdata_back system_back end
     do
         if [ "$p" == "end" ] ; then
             p="partmagic"
@@ -350,11 +424,17 @@ do_del_partition() {
         delete_partition $idx $p
     done
 }
+do_del_partition() {
+    #do_del_partition_sys
+    do_del_partition_user
+ }
 ## main 
 while getopts "dah" opt; do
     case $opt in
         a)
             do_auto_partition
+            do_format
+            do_auto_mount
             ;;
         d)
             do_del_partition
