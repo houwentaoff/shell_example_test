@@ -1,0 +1,10 @@
+# alias中使用shell命令
+[user]
+	email = 544088192@qq.com
+	name = houwentaoff
+[color]
+	ui = auto
+#[safe]
+#	directory = /opt/buildroot-2020.02.7
+[alias]
+    st = "!f() { git status |less; }; f"
