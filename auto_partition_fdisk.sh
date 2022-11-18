@@ -5,7 +5,7 @@
 # 
 #         USAGE: ./auto_partition.sh 
 # 
-#   DESCRIPTION: 
+#   DESCRIPTION: auto_partition.sh -a 可在启动时这样使用
 # 
 #       OPTIONS: ---
 #  REQUIREMENTS: ---
@@ -18,7 +18,9 @@
 #===============================================================================
 set -o nounset                              # Treat unset variables as an error
 GDISK_BIN="fdisk"
-FORMAT_BIN="mke2fs  -i 8192 " #mkfs.ext4
+#FORMAT_BIN="mke2fs  -i 8192 " #mkfs.ext4
+FORMAT_BIN="mkfs.ext4 "
+FSCK="e2fsck  -y "
 # temp disk for testing gdisk
 #$(mktemp) 
 TEMP_DISK="/dev/mmcblk0" #"/tmp/aaa" 
@@ -308,6 +310,11 @@ do_auto_partition_user() {
         return
     fi
     i=1
+    delete_partition 1 "aabbccdd"
+    create_partition "83" "30M" "Linux" "0M" 1 "100"
+    mkfs.vfat /dev/mmcblk0p1
+    echo "format /dev/mmcblk0p1 successed!!"
+    #exit 2
     for pp in ${CUSTOM_PARTS} 
     do
         size="0M"
@@ -385,6 +392,7 @@ do_auto_mount(){
             case $p in  
                 $CUSTOM1_NAME)
                     mkdir -p $CUSTOM_MOUNTPOINT0
+                    ${FSCK} -y ${TEMP_DISK}p$idx
                     mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT0 || ( echo y | ${FORMAT_BIN} ${TEMP_DISK}p$idx && mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT0 ) 
                     if [ $? -ne 0 ] ; then
                         pretty_print "FAILED" "mount idx:$idx name:$p"
@@ -392,6 +400,7 @@ do_auto_mount(){
                     ;;
                 $CUSTOM2_NAME)
                     mkdir -p $CUSTOM_MOUNTPOINT1
+                    ${FSCK} -y ${TEMP_DISK}p$idx
                     mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT1 || ( echo y | ${FORMAT_BIN} ${TEMP_DISK}p$idx && mount ${TEMP_DISK}p$idx  $CUSTOM_MOUNTPOINT1 ) 
                     if [ $? -ne 0 ] ; then
                         pretty_print "FAILED" "mount idx:$idx name:$p"
